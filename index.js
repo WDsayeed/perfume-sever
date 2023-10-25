@@ -74,6 +74,26 @@ async function run() {
       res.send({ token });
     });
 
+    // create index key
+    // await bestCollectionPerfume.dropIndex("titleCategory"); // Drop the existing index
+    const indexKey = { name: 1, category: 1 }
+    const indexOptions = { name: "newIndexName" }
+    
+    const result = await bestCollectionPerfume.createIndex(indexKey, indexOptions)
+
+    app.get('/jobSearchByTitle/:text', async (req, res) => {
+      const searchText = req.params.text
+      console.log(searchText)
+      const result = await bestCollectionPerfume.find({
+        $or: [
+        {name: {$regex:  searchText, $options: 'i'}},
+        {category: {$regex:  searchText, $options: 'i'}},
+        ]
+      }).toArray()
+
+      res.send(result)
+    })
+
     // warning: use verifyJwt before using verifyAdmin
     const veryAdmin = async (req, res, next) => {
       const email = req.decoded.email 
@@ -322,13 +342,16 @@ async function run() {
 
     const tran_id = new ObjectId().toString()
     // payment related
+
     app.post('/order', async (req, res) => {
       const order = req.body 
+      console.log('ooo',order)
       const price = order.price 
       const priceNum = parseFloat(price)
+      console.log(priceNum)
     
       const data = {
-        total_amount: priceNum,
+        total_amount: parseFloat(order.price),
         currency: order.currency,
         tran_id: tran_id, // use unique tran_id for each api call
         success_url: `http://localhost:5000/payment/success/${tran_id}`,
@@ -362,7 +385,7 @@ async function run() {
     const sslcz = new SSLCommerzPayment(store_id, store_passwd, is_live)
     sslcz.init(data).then(async apiResponse => {
       // Redirect the user to payment gateway
-      console.log(apiResponse)
+      // console.log(apiResponse)
         let GatewayPageURL = apiResponse.GatewayPageURL
         res.send( {url: GatewayPageURL})
         
@@ -377,7 +400,7 @@ async function run() {
       app.post('/payment/success/:tranId', async (req, res) => {
        const trans_id = req.params.tranId
         const transactionId = { transactionId: trans_id }
-        console.log(transactionId)
+        // console.log(transactionId)
         const updateDoc = {
           $set: {
             paidStatus: true
@@ -401,6 +424,10 @@ async function run() {
       
     })
 
+    app.get('/orderDetails', async (req, res) => {
+      const result = await orderCollection.find().toArray()
+      res.send(result)
+    })
     app.get('/admin-stats',verifyJWT, veryAdmin, async (req, res) => {
       const users = await usersCollection.estimatedDocumentCount();
       const products = await bestCollectionPerfume.estimatedDocumentCount();
@@ -418,12 +445,12 @@ async function run() {
     
       // Execute the aggregation pipeline
       const aggregationResult = await orderCollection.aggregate(pipeline).toArray();
-      console.log(aggregationResult)
+      // console.log(aggregationResult)
     
       // Check if there are aggregation results
       if (aggregationResult.length > 0) {
         const revenue = aggregationResult[0].totalPrice;
-        console.log(revenue)
+        // console.log(revenue)
         res.send({
           users,
           products,
@@ -440,6 +467,39 @@ async function run() {
         });
       }
     });
+
+    
+    app.get('/monthly-sales', async (req, res) => {
+      try {
+        const salesData = await orderCollection.aggregate([
+          {
+            $group: {
+              _id: {
+                year: { $year: { $toDate: '$order.purchaseDate' } },
+                month: { $month: { $toDate: '$order.purchaseDate' } }
+              },
+              totalSales: { $sum: '$order.price' } // Use 'price' instead of 'totalAmount'
+            }
+          },
+          {
+            $project: {
+              _id: 0,
+              year: '$_id.year',
+              month: '$_id.month',
+              totalSales: 1
+            }
+          }
+        ]).sort({ year: 1, month: 1 });
+    
+        console.log(salesData);
+        res.json(salesData);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+    
+
     //     await client.connect();
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
